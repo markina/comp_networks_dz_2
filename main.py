@@ -130,7 +130,7 @@ class ServerTcp:
                     conn.close()
                 continue
             if self.stop_thread.is_set():
-                if conn is None:
+                if conn is not None:
                     conn.close()
                 break
 
