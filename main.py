@@ -196,11 +196,12 @@ class ClientTcp:
             message_box.put(pi_string[:cnt+1])
 
         while not stop_event.is_set() and not recycling.is_set():
+            time.sleep(2)
             if not message_box.empty():
                 msg = message_box.get()
                 if len(msg) < len(pi_string):
                     msg += pi_string[len(msg)]
-                print("[client_tcp] send data:", msg)
+                print("[client_tcp] send dataof len {}: {}".format(len(msg), msg))
                 s.send(pack_data_tcp(msg))
         s.close()
 
