@@ -156,6 +156,7 @@ class ServerTcp:
                         continue
                 if len(data) == 0:
                     print('[server_tcp] connection lost')
+                    cl_udp.send_recycle()
                     break
                 print("[server_tcp] received data:", data)
                 unpacked_data = unpack_data_tcp(data)
