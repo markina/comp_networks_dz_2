@@ -49,13 +49,14 @@ class ServerUdp:
                     recycling.clear()
             else:
                 if is_recycle_msg(data):
+                    print('[server_udp] Received recycle init message from {}'.format(address[1]))
                     recycling.set()
                     table = {}
                     cl_udp.send_info()
                 elif len(data) != 0:
                     if not recycling.is_set():
                         recycling.set()
-                        print('[server_udp] INIT RECYCLE')
+                        print('[server_udp] INIT RECYCLE: udp message from unknown host')
                         cl_udp.send_recycle()
                     print('[server_udp] received {} bytes from {}'.format(str(len(data)), address))
                     add_to_table(data, address)
