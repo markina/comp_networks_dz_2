@@ -49,9 +49,9 @@ class ServerUdp:
                     recycling.clear()
             else:
                 if is_recycle_msg(data):
-                    print('[server_udp] Received recycle init message from {}'.format(address[1]))
+                    print('[server_udp] Received recycle init message from {}'.format(address[0]))
                     recycling.set()
-                    table = {}
+                    table.clear()
                     cl_udp.send_info()
                 elif len(data) != 0:
                     if not recycling.is_set():
@@ -115,7 +115,7 @@ class ServerTcp:
             time.sleep(3)
             if self.stop_thread.is_set():
                 break
-            if self.restart_thread.is_set():
+            if self.restart_thread.is_set() or recycling.is_set():
                 continue
             prev = get_prev()
             cl_tcp.start()
@@ -159,9 +159,9 @@ class ServerTcp:
                     print('[server_tcp] connection lost')
                     cl_udp.send_recycle()
                     break
-                print("[server_tcp] received data:", data)
                 unpacked_data = unpack_data_tcp(data)
                 cnt = len(unpacked_data)
+                print("[server_tcp] received data of len {}: {}".format(cnt, data))
                 message_box.put(unpacked_data)
             conn.close()
         s.close()
