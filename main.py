@@ -120,6 +120,7 @@ class ServerTcp:
         print('[server_tcp] accepting connection from {}'.format(addr))
         if addr[0] != table[prev].ip:
             print('[server_tcp] Received connection from wrong address {}. {} expected. Recycling'.format(addr[0], table[prev].ip))
+            conn.close()
             s.close()
             init_recycling()
             return
@@ -131,9 +132,9 @@ class ServerTcp:
                 break
             print("[server_tcp] received data:", data)
             time.sleep(0.5)
-            cnt += 1
             message_box.put(unpack_data_tcp(data))
         conn.close()
+        s.close()
 
     def start(self):
         self.event = threading.Event()
@@ -170,11 +171,15 @@ class ClientTcp:
 
         mac, cnt = get_min()
         if len(table) > 1 and mac == MAC_ADDR:
+            print('[client_tcp] I must send initial message')
             message_box.put(pi_string[:cnt+1])
+        else:
+            print('[client_tcp] I am waiting for message')
 
         while not event.is_set():
             if not message_box.empty():
                 msg = message_box.get()
+                cnt = len(msg) + 1
                 if len(msg) < len(pi_string):
                     msg += pi_string[len(msg)]
                 print("[client_tcp] send data:", msg)
@@ -259,6 +264,7 @@ def do_recycling():
     cl_tcp.event.set()
 
     ser_udp.start()
+    time.sleep(0.5)
     cl_udp.send_info()
 
 
