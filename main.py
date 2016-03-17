@@ -12,12 +12,12 @@ PORT_UDP = 1234
 PORT_TCP = 1235
 LOCALHOST = '127.0.0.1'
 cnt = 0
-pi_string = ""
 
 table_lock = threading.Lock()
 table = {}
-MAC_ADDR = netifaces.ifaddresses('wlan0')[netifaces.AF_LINK][0]['addr']
+MAC_ADDR = netifaces.ifaddresses('wlp7s0')[netifaces.AF_LINK][0]['addr']
 message_box = Queue()
+recycling = threading.Event()
 
 with open('pi.txt', 'r') as f:
     pi_string = f.readline()
@@ -27,50 +27,44 @@ Info = namedtuple("Info", ["host_name", "timestamp", "ip", "cnt"])
 
 class ServerUdp:
     def __init__(self):
-        self.event = threading.Event()
+        self.stop_thread = threading.Event()
         self.thread = None
 
-    def run(self, event):
-        recycled = False
+    def run(self):
+        global table
+        recycling.set()
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         server_address = ('', PORT_UDP)
         print('[server_udp] starting up on ' + str(PORT_UDP) + ' port')
         sock.bind(server_address)
         sock.settimeout(2)
-        while not event.is_set():
+        while not self.stop_thread.is_set():
             print('[server_udp] waiting to receive message')
             try:
                 data, address = sock.recvfrom(4096)
             except socket.timeout:
                 print('[server_udp] no messages received in 2 seconds')
-                if not recycled:
+                if recycling.is_set():
                     print('[server_udp] cycle constructed. Starting communication')
-                    recycled = True
-                    ser_tcp.start()
-                    cl_tcp.start()
+                    recycling.clear()
             else:
                 if is_recycle_msg(data):
-                    sock.close()
-                    do_recycling()
-                    break
-                elif len(data) == 0:
-                    continue
-                else:
-                    if recycled:
-                        init_recycling()
-                        break
-                    print(
-                        '[server_udp] received {} bytes from {}'.format(
-                            str(len(data)),
-                            address))
+                    recycling.set()
+                    table = {}
+                    cl_udp.send_info()
+                elif len(data) != 0:
+                    if not recycling.is_set():
+                        recycling.set()
+                        print('[server_udp] INIT RECYCLE')
+                        cl_udp.send_recycle()
+                    print('[server_udp] received {} bytes from {}'.format(str(len(data)), address))
                     add_to_table(data, address)
 
         sock.close()
         print('[server_udp] closing socket')
 
     def start(self):
-        self.event = threading.Event()
-        self.thread = threading.Thread(target=self.run, args=(self.event,))
+        self.thread = threading.Thread(target=self.run)
         self.thread.start()
 
 
@@ -90,89 +84,115 @@ class ClientUdp:
             sock.close()
 
     def send_recycle(self):
-        message = get_recycle_msg()
-        threading.Thread(target=self.run, args=(message,)).start()
+        threading.Thread(target=self.run, args=(get_recycle_msg(),)).start()
 
     def send_info(self):
-        message = get_info_msg()
-        threading.Thread(target=self.run, args=(message,)).start()
+        threading.Thread(target=self.run, args=(get_info_msg(),)).start()
 
 
 class ServerTcp:
     def __init__(self):
-        self.event = threading.Event()
+        self.stop_thread = threading.Event()
+        self.restart_thread = threading.Event()
         self.thread = None
 
-    def run(self, event):
+    def run(self):
         print('[server_tcp] Starting')
         global cnt
-        prev = get_prev()
-        print('Prev:', prev, table[prev])
-        TCP_IP = LOCALHOST
         BUFFER_SIZE = 1024
 
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.bind(('', PORT_TCP))
         s.listen(1)
         print('[server_tcp] listening on the port {}'.format(PORT_TCP))
+        s.settimeout(3)
 
-        conn, addr = s.accept()
-        print('[server_tcp] accepting connection from {}'.format(addr))
-        if addr[0] != table[prev].ip:
-            print('[server_tcp] Received connection from wrong address {}. {} expected. Recycling'.format(addr[0], table[prev].ip))
-            s.close()
-            init_recycling()
-            return
-        while not event.is_set():
-            data = conn.recv(BUFFER_SIZE)
-            if not data:
-                if not event.is_set():
-                    init_recycling()
+        while not self.stop_thread.is_set():
+            self.restart_thread.clear()
+            while recycling.is_set() and not self.stop_thread.is_set():
+                time.sleep(.5)
+            time.sleep(3)
+            if self.stop_thread.is_set():
                 break
-            print("[server_tcp] received data:", data)
-            time.sleep(0.5)
-            cnt += 1
-            message_box.put(unpack_data_tcp(data))
-        conn.close()
+            if self.restart_thread.is_set():
+                continue
+            prev = get_prev()
+            cl_tcp.start()
+            conn = None
+            # Maybe it's too complicated, but it must work
+            while conn is None and not self.restart_thread.is_set() and not self.stop_thread.is_set() and not recycling.is_set():
+                try:
+                    conn, addr = s.accept()
+                except socket.timeout:
+                    pass
+            if self.restart_thread.is_set() or recycling.is_set():
+                if conn is not None:
+                    conn.close()
+                continue
+            if self.stop_thread.is_set():
+                if conn is None:
+                    conn.close()
+                break
+
+            print('[server_tcp] accepting connection from {}'.format(addr))
+            if addr[0] != table[prev].ip:
+                print('[server_tcp] Received connection from wrong address {}. {} expected. Recycling'.format(addr[0], table[prev].ip))
+                conn.close()
+                cl_udp.send_recycle()
+                recycling.set()
+                continue
+
+            conn.settimeout(30)
+            while not self.restart_thread.is_set() and not self.stop_thread.is_set() and not recycling.is_set():
+                try:
+                    data = conn.recv(BUFFER_SIZE)
+                except socket.timeout:
+                    if len(table) > 1:
+                        conn.close()
+                        cl_udp.send_recycle()
+                        break
+                    else:
+                        print('[server_tcp] no data received in 30 seconds')
+                        continue
+                print("[server_tcp] received data:", data)
+                unpacked_data = unpack_data_tcp(data)
+                cnt = len(unpacked_data)
+                message_box.put(unpacked_data)
+            conn.close()
+        s.close()
 
     def start(self):
-        self.event = threading.Event()
-        self.thread = threading.Thread(target=self.run, args=(self.event,))
+        self.thread = threading.Thread(target=self.run)
         self.thread.start()
 
-
-def pack_data_tcp(msg):
-    str_len_msg = str(len(msg)).rjust(4, '0')
-    return bytes(str_len_msg + msg, encoding='utf-8')
 
 
 class ClientTcp:
     def __init__(self):
-        self.event = threading.Event()
+        self.stop_thread = threading.Event()
         self.thread = None
 
-    def run(self, event):
+    def run(self, stop_event):
+        print('[client_tcp] starting')
         next = get_next()
-        print('Next:', next, table[next])
+        # print('Next:', next, table[next])
 
         TCP_IP = table[next].ip
-        BUFFER_SIZE = 1024
 
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(3)
         try:
-            time.sleep(2)
             print('[client_tcp] conecting to {}:{}'.format(TCP_IP, PORT_TCP))
             s.connect((TCP_IP, PORT_TCP))
         except socket.timeout:
-            init_recycling()
+            cl_udp.send_recycle()
             return
 
         mac, cnt = get_min()
         if len(table) > 1 and mac == MAC_ADDR:
             message_box.put(pi_string[:cnt+1])
 
-        while not event.is_set():
+        while not stop_event.is_set() and not recycling.is_set():
             if not message_box.empty():
                 msg = message_box.get()
                 if len(msg) < len(pi_string):
@@ -182,9 +202,16 @@ class ClientTcp:
         s.close()
 
     def start(self):
-        self.event = threading.Event()
-        self.thread = threading.Thread(target=self.run, args=(self.event,))
+        time.sleep(2)
+        self.stop_thread = threading.Event()
+        self.thread = threading.Thread(target=self.run, args=(self.stop_thread,))
         self.thread.start()
+
+
+
+def pack_data_tcp(msg):
+    str_len_msg = str(len(msg)).rjust(4, '0')
+    return bytes(str_len_msg + msg, encoding='utf-8')
 
 
 def get_recycle_msg():
@@ -252,20 +279,6 @@ ser_tcp = ServerTcp()
 cl_tcp = ClientTcp()
 
 
-def do_recycling():
-    table.clear()
-    ser_tcp.event.set()
-    ser_udp.event.set()
-    cl_tcp.event.set()
-
-    ser_udp.start()
-    cl_udp.send_info()
-
-
-def init_recycling():
-    cl_udp.send_recycle()
-
-
 def get_prev():
     prevs = [mac for mac in table if mac < MAC_ADDR]
     if len(prevs) == 0:
@@ -296,10 +309,16 @@ def unpack_data_tcp(data):
     msg = bytes.decode(data[4:4+len_msg])
     return msg
 
-init_recycling()
+cl_udp.send_recycle()
 ser_udp.start()
+ser_tcp.start()
 time.sleep(0.5)
 cl_udp.send_info()
 while True:
     # print('Table: {}'.format(table))
-    time.sleep(10)
+    s = input()
+    if s == 'x':
+        cl_tcp.stop_thread.set()
+        ser_tcp.stop_thread.set()
+        ser_udp.stop_thread.set()
+        break
