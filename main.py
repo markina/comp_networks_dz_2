@@ -154,6 +154,9 @@ class ServerTcp:
                     else:
                         print('[server_tcp] no data received in 30 seconds')
                         continue
+                if len(data) == 0:
+                    print('[server_tcp] no data received in 30 seconds')
+                    continue
                 print("[server_tcp] received data:", data)
                 unpacked_data = unpack_data_tcp(data)
                 cnt = len(unpacked_data)
