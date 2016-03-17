@@ -155,8 +155,8 @@ class ServerTcp:
                         print('[server_tcp] no data received in 30 seconds')
                         continue
                 if len(data) == 0:
-                    print('[server_tcp] no data received in 30 seconds')
-                    continue
+                    print('[server_tcp] connection lost')
+                    break
                 print("[server_tcp] received data:", data)
                 unpacked_data = unpack_data_tcp(data)
                 cnt = len(unpacked_data)
@@ -193,7 +193,10 @@ class ClientTcp:
 
         mac, cnt = get_min()
         if len(table) > 1 and mac == MAC_ADDR:
+            print('[client_tcp] I must send initial message')
             message_box.put(pi_string[:cnt+1])
+        else:
+            print('[client_tcp] Someone knows more then me')
 
         while not stop_event.is_set() and not recycling.is_set():
             time.sleep(2)
