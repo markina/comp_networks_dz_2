@@ -52,7 +52,8 @@ class ServerUdp:
                     print('[server_udp] Received recycle init message from {}'.format(address[0]))
                     recycling.set()
                     table.clear()
-                    cl_udp.send_info()
+                    if not self.stop_thread():
+                        cl_udp.send_info()
                 elif len(data) != 0:
                     if not recycling.is_set():
                         recycling.set()
@@ -161,7 +162,7 @@ class ServerTcp:
                     break
                 unpacked_data = unpack_data_tcp(data)
                 cnt = len(unpacked_data)
-                print("[server_tcp] received data of len {}: {}".format(cnt, data))
+                print("[server_tcp] received data of len {}: {}".format(cnt, unpacked_data))
                 message_box.put(unpacked_data)
             conn.close()
         s.close()
